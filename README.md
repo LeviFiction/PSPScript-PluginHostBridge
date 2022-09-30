@@ -1,4 +1,4 @@
-# PluginHostBridge
+# PSPScript-PluginHostBridge
 A script to call a commandline plugin host for 32-bit photoshop plugins
 
 Using the Photoshop Plugin Host from Spectric - https://github.com/spetric/Photoshop-Plugin-Host
