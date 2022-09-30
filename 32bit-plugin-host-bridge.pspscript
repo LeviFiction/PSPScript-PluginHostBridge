@@ -1,0 +1,265 @@
+from PSPApp import *
+import os
+import uuid
+
+# This code assumes NiGulp is in one of your Plugins Folders
+
+gs = {'ExecutionMode': App.Constants.ExecutionMode.Silent, 
+      'AutoActionMode': App.Constants.AutoActionMode.Match, 
+      'Version': ((9,0,0),1)
+      }
+
+def ScriptProperties():
+    return {
+        'Author': u'LeviFiction',
+        'Copyright': u'2022',
+        'Description': u'Open layer in external program NiGulp',
+        'Host': u'PaintShop Pro',
+        'Host Version': u'9'
+        }
+    
+def Do(Environment):
+    '''Main function of the script'''
+    # Not using Optimized Undo so I can undo the layer visibility change
+    
+    #Is there a document?
+    if not App.Documents:
+        return
+
+    # Try saving selection, if one exists great if not, no worries
+    doc = App.TargetDocument
+    saved_selection = SaveSelection(Environment, doc)
+
+    # Perform set up
+    app = find_app(Environment, "NiGulp.exe", folder='Plugins')
+
+    if not app or not os.path.exists(app):
+        msgbox(Environment, "Couldn't find app in your plugins folder")
+        return
+
+    temp_folder = get_file_location(Environment, 'Temp')[0]
+    tdir,_ = os.path.split(temp_folder)
+
+    #Set filenames of the files we'll be using, they are in the potrace Directory
+    random_name = generate_random_filename()
+    filename = os.path.join(tdir,  random_name + ".png") # lossless - allows transparency
+
+    if saved_selection.IsSaved: # We're using a selection
+        # Saving the selection removes it, so add it back immediately
+        promote_selection(Environment, doc)
+
+    # Show Current Layer
+    show_current_layer(Environment, doc)
+
+    save_as_png(Environment, filename, doc)
+
+    # Undo Show Current layer
+    undo(Environment, doc)
+
+    if not os.path.exists(filename):
+        msgbox(Environment, "Layer could not be sent to app")
+        return
+
+    execute_app(app, filename)
+
+    open_as_layer(Environment, filename, doc)
+
+    # Clean Up
+    os.remove(filename)
+
+    # If we were using a selection, copy the layer, paste into selection
+    if saved_selection.IsSaved:
+        copy(Environment, doc)
+        delete_layer(Environment, doc)
+        paste_into_selection(Environment, doc)
+
+
+
+###################################################################################################
+# Helper functions
+###################################################################################################
+def generate_random_filename():
+    return uuid.uuid4().hex
+
+def execute_app(exe_path, input_filename, settings=''):
+    exe_path = correct_path(exe_path)
+    input_filename = correct_path(input_filename)
+    command = exe_path + " " + input_filename  + settings
+    print(command)
+    print(os.system(command))
+
+def walk(top):
+    try:
+        names = os.listdir(top)
+    except:
+        pass
+
+    dirs, nondirs = [], []
+    for name in names:
+        if os.path.isdir(os.path.join(top, name)):
+            dirs.append(name)
+        else:
+            nondirs.append(name)
+
+    yield (top, dirs, nondirs)
+
+def get_file_location(env, location_type=None):
+    types = ['Temp', 'Tubes', 'Patterns', 'Textures', 'Gradients', 'Brushes', 
+             'Frame', 'Shape', 'StyledLines', 'Plugins', 'RestrictedScripts',
+             'TrustedScripts', 'Presets', 'Swatches', 'Cache', 'Masks', 
+             'Selections', 'CMYKProfiles', 'PrintTemplates', 'Workspaces',
+             'Palettes', 'DeformationMaps', 'EnvironmentMaps', 'BumpMaps', 
+             'Pythonsourceeditor', 'CategoryDatabase', 'MixerPages']
+    locations = App.Do(env, 'ReturnFileLocations',{'GeneralSettings':gs})
+    if location_type and location_type in types:
+        return locations[location_type]
+    return locations
+
+def find_app(env, file, folder='Plugins'):
+    # Uses walk function found in older scripts
+    # Looks in all Scripts-trusted locations to find exe
+    result = None
+    Dirs = get_file_location(env, folder)
+    for dir in Dirs:
+        result = find_file(dir, file)
+        if result:
+            break
+    return result
+
+def find_file(dir, name):
+    for path, _, files in walk(dir):
+        for file in files:
+            print(file)
+            if file == name: 
+                break
+        else:
+            continue
+        break
+    else:
+        return False
+
+    return os.path.join(path, file)
+
+def correct_path(path):
+    '''If path contains spaces, find them and surround them with quotes'''
+    path = os.path.abspath(path)
+    if " " in path:
+        path = '"' + path + '"'
+    return path
+
+def msgbox(env, text, icons = 1, buttons = 0):
+    App.Do(env, 'MsgBox', {
+        'Buttons':buttons,
+        'Icon':icons,
+        'Text':text,
+    })
+
+def command(env, command, params={}, doc=None):
+    doc = App.TargetDocument if not doc else doc
+    App.Do( env, command, params, doc)
+    
+def file_close(env, doc=None):
+    command(env, 'FileClose', doc=doc)
+
+def show_current_layer(env, doc=None):
+    command(env, 'LayerViewCurrentOnly',doc=doc)
+
+def undo(env, doc=None):
+    command(env, 'UndoLastCmd',doc=doc)
+
+def promote_selection(env, doc=None):
+    command( env, 'SelectPromote', {'KeepSelection': None, 
+                                   'LayerName': 'Temporary promoted selection', 
+                                   'GeneralSettings':gs}, doc)
+
+def save_as_png(env, filename, doc=None):
+    doc = App.TargetDocument if not doc else doc
+    # FileSaveCopyAs - PNG
+    # FileSaveCopyAs
+    command( env, 'FileSaveCopyAs', params={
+            'Encoding': {
+                'PNG': {
+                    'Interlaced': False, 
+                    'OptimizedPalette': True, 
+                    'AlphaChannel': True
+                    }
+                }, 
+            'FileName': filename, 
+            'FileFormat': App.Constants.FileFormat.PNG, 
+            'FormatDesc': u'PNG Portable Network Graphics', 
+            'WorkingMode': 0, 
+            'GeneralSettings': gs, 
+            'DefaultProperties': []
+            },doc=doc)
+
+def open_as_layer(env, filename, doc=None):
+    command(env, 'FileOpenAsNewLayer', {'FileList':[filename], 
+                                        'insertTo':-1,
+                                        'GeneralSettings':gs}, doc)
+
+def copy(env, doc=None):
+    command( env, 'Copy', doc=doc)
+
+def delete_layer(env, doc=None):
+    command( env, 'DeleteLayer', params={'Path': None, 'MergeMask': True,
+                                         'WorkingMode': 1,'GeneralSettings': gs
+                                        }, doc=doc)
+def paste_into_selection(env, doc=None):
+    command( env, 'PasteIntoSelection',doc=doc)
+
+
+class SaveSelection:
+    ''' define a helper class that can save any active selection to the alpha
+        channel and restore it later
+    '''
+    def __init__( self, Environment, Doc ):
+        ''' at init time we save the environment variable provided by PSP,
+            and if a selection exists we save it to an alpha channel
+        '''
+        self.Env = Environment
+        self.SavedSelection =  '__$TempSavedSelection$__'
+        self.IsSaved = 0
+        self.SavedOnDoc = Doc
+        
+        SelResult = App.Do( self.Env, 'GetRasterSelectionRect' )
+        if SelResult[ 'Type' ] != 0:
+            # if there is a selection save it to the alpha channel
+            App.Do( self.Env, 'SelectSaveDisk', {
+                'FileName': self.SavedSelection, 
+                'Overwrite': App.Constants.Boolean.true, 
+                'GeneralSettings': {
+                    'ExecutionMode': App.Constants.ExecutionMode.Silent, 
+                    'AutoActionMode': App.Constants.AutoActionMode.Match
+                    }
+                }, Doc)
+            self.IsSaved = 1    # set this so we know we saved one
+            
+            if SelResult[ 'Type' ] == App.Constants.SelectionType.Floating:
+                # if the selection is floating promote it to a layer
+                App.Do( self.Env, 'SelectPromote', {
+                        'KeepSelection': App.Constants.Boolean.false, 
+                        'LayerName': 'SelectionLayer', 
+                        'GeneralSettings': gs
+                        }, Doc)
+            else:
+                App.Do( self.Env, 'SelectNone' )
+           
+            
+    def RestoreSelection( self ):
+        ''' if we have saved a selection, restore it now.  If we promoted
+            a floating selection to a layer we don't restore the selection
+            but don't attempt to mess with the layer in any way
+        '''
+        if self.IsSaved == 1:
+            # load the selection back from disk - this will replace any existing selection
+            App.Do( self.Env, 'SelectLoadDisk', {
+                    'FileName': self.SavedSelection, 
+                    'Operation': App.Constants.SelectionOperation.Replace, 
+                    'UpperLeft': App.Constants.Boolean.false, 
+                    'ClipToCanvas': App.Constants.Boolean.false, 
+                    'GreyMethod': App.Constants.CreateMaskFrom.Luminance, 
+                    'Invert': App.Constants.Boolean.false, 
+                    'GeneralSettings': gs
+                    }, self.SavedOnDoc)
+
+    # end class SaveSelection
